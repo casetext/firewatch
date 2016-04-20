@@ -1,52 +1,53 @@
-var WebSocket = require('ws'),
-	ws;
+var WebSocket = require('ws');
 
-
-var reply = {};
-
-var state = 0,
-	req = 0,
-	NORMAL = 0,
+var NORMAL = 0,
 	IGNORE_NEXT_STREAM = 1,
 	IGNORED_STREAM = 2,
-	STREAMING = 3,
-	frames,
-	received,
-	buf;
+	STREAMING = 3;
+
+
+function FirebaseWatcher(opts) {
+	this.db = opts.db;
+	this.auth = opts.auth;
+	this.host = opts.host;
+	this.req = 0;
+	this.reply = {};
+}
 
 
 
+FirebaseWatcher.prototype.connect = function() {
+	var self = this;
+	if (!self.host) self.host = self.db + '.firebaseio.com';
 
-function connect(db, auth, host) {
-	if (!host) host = db + '.firebaseio.com';
-
-	console.log('CONNECT', host);
-	ws = new WebSocket('wss://' + host + '/.ws?v=5&ns=' + db);
-	ws.on('message', function(msg) {
+	console.log('CONNECT', self.host);
+	self.ws = new WebSocket('wss://' + self.host + '/.ws?v=5&ns=' + self.db);
+	self.ws.on('message', function(msg) {
 
 		if (!isNaN(msg)) {
-			if (state == IGNORE_NEXT_STREAM) {
-				state = IGNORED_STREAM;
+			if (self.state == IGNORE_NEXT_STREAM) {
+				self.state = IGNORED_STREAM;
 			} else {
-				state = STREAMING;
+				self.state = STREAMING;
 			}
-			frames = parseInt(msg, 10);
-			received = 0;
-			buf='';
+			self.frames = parseInt(msg, 10);
+			self.received = 0;
+			self.buf='';
 		} else {
 
-			if (state == IGNORED_STREAM) {
-				++received;
-				console.log(received + ' / ' + frames);
-				if (received == frames) {
-					state = NORMAL;
+			if (self.state == IGNORED_STREAM) {
+				++self.received;
+				console.log(self.received + ' / ' + self.frames);
+				if (self.received == self.frames) {
+					self.state = NORMAL;
 				}
-			} else if (state == STREAMING) {
-				++received;
-				buf += msg;
-				if (received == frames) {
-					state = NORMAL;
-					handleMessage(buf);
+			} else if (self.state == STREAMING) {
+				++self.received;
+				self.buf += msg;
+				if (self.received == self.frames) {
+					self.state = NORMAL;
+					handleMessage(self.buf);
+					self.buf = null;
 				}
 			} else {
 				handleMessage(msg);
@@ -65,14 +66,15 @@ function connect(db, auth, host) {
 			case 'c':
 				switch (msg.d.t) {
 					case 'r': // redirect to different server
-						close();
-						connect(db, auth, msg.d.d);
+						self.close();
+						self.host = msg.d.d;
+						self.connect();
 						break;
 					case 'h': // should be first message recieved
-						send({
+						self._send({
 							t: 'd',
 							d: {
-								r: ++req, // 1
+								r: ++self.req, // 1
 								a: 's',
 								b: {
 									c: {
@@ -82,7 +84,7 @@ function connect(db, auth, host) {
 							}
 						}, function(msg) {
 							if (msg.d.b.s == 'ok') {
-								send({
+								self._send({
 									t: 'c',
 									d: {
 										t: 'p',
@@ -97,23 +99,23 @@ function connect(db, auth, host) {
 						break;
 
 					case 'o': // response to t:c msg sent after req 1
-						send({
+						self._send({
 							t: 'd',
 							d: {
-								r: ++req,
+								r: ++self.req,
 								a: 'auth',
 								b: {
-									cred: auth
+									cred: self.auth
 								}
 							}
 						}, function(msg) {
 							if (msg.d.b.s == 'ok') {
-								ws.__keepalive = setInterval(sendKeepalive, 45000);
-								state = IGNORE_NEXT_STREAM;
-								send({
+								self._keepalive = setInterval(sendKeepalive, 45000, self);
+								self.state = IGNORE_NEXT_STREAM;
+								self._send({
 									t: 'd',
 									d: {
-										r: ++req,
+										r: ++self.req,
 										a: 'q',
 										b: {
 											p: '/',
@@ -136,7 +138,7 @@ function connect(db, auth, host) {
 				break;
 			case 'd':
 				if (msg.d.r) {
-					handleReply(msg);
+					handleReply(self, msg);
 				} else if (msg.d.a == 'd') {
 					console.log('update to', msg.d.b.p, '=', msg.d.b.d);
 				}
@@ -144,28 +146,39 @@ function connect(db, auth, host) {
 		}
 
 	}
-}
+};
 
-function sendKeepalive() {
-	ws.send('0');
-}
+FirebaseWatcher.prototype.close = function() {
+	clearInterval(this._keepalive);
+	this.ws.close();
+};
 
-function close() {
-	clearInterval(ws.__keepalive);
-	ws.close();
-}
-
-function send(msg, cb) {
+FirebaseWatcher.prototype._send = function(msg, cb) {
 	if (cb) {
-		reply[msg.d.r] = cb;
+		this.reply[msg.d.r] = cb;
 	}
 	console.log('>', msg);
-	ws.send(JSON.stringify(msg));
+	this.ws.send(JSON.stringify(msg));
 }
 
-function handleReply(msg) {
-	reply[msg.d.r](msg);
-	delete reply[msg.d.r];
+
+function sendKeepalive(self) {
+	self.ws.send('0');
 }
 
-connect(process.argv[2], process.argv[3]);
+
+function handleReply(self, msg) {
+	self.reply[msg.d.r](msg);
+	delete self.reply[msg.d.r];
+}
+
+
+
+exports = module.exports = FirebaseWatcher;
+
+var watcher = new FirebaseWatcher({
+	db: process.argv[2],
+	auth: process.argv[3]
+});
+
+watcher.connect();
