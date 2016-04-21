@@ -1,4 +1,6 @@
 var WebSocket = require('ws'),
+	EventEmitter = require('events').EventEmitter,
+	util = require('util'),
 	package = require('./package.json');
 
 var NORMAL = 0,
@@ -8,6 +10,7 @@ var NORMAL = 0,
 
 
 function FirebaseWatcher(opts) {
+	EventEmitter.call(this);
 	this.db = opts.db;
 	this.auth = opts.auth;
 	this.host = opts.host;
@@ -16,20 +19,19 @@ function FirebaseWatcher(opts) {
 	this.watches = {};
 }
 
-
+util.inherits(FirebaseWatcher, EventEmitter);
 
 FirebaseWatcher.prototype.connect = function() {
 	var self = this;
 	if (!self.host) self.host = self.db + '.firebaseio.com';
 
-	console.log('CONNECT', self.host);
 	self.ws = new WebSocket('wss://' + self.host + '/.ws?v=5&ns=' + self.db);
 	self.ws.on('message', function(msg) {
 
 		if (!isNaN(msg)) {
 			if (self.state == IGNORE_NEXT_STREAM) {
 				self._rootReceived = Date.now();
-				console.log('Time to gather root:', self._rootReceived - self._rootRequested);
+				self.emit('serverReady', self._rootReceived - self._rootRequested)
 				self.state = IGNORED_STREAM;
 			} else {
 				self.state = STREAMING;
@@ -41,9 +43,11 @@ FirebaseWatcher.prototype.connect = function() {
 
 			if (self.state == IGNORED_STREAM) {
 				++self.received;
-				console.log(self.received + ' / ' + self.frames);
 				if (self.received == self.frames) {
 					self.state = NORMAL;
+					self.emit('ready');
+				} else {
+					self.emit('initProgress', self.received, self.frames);
 				}
 			} else if (self.state == STREAMING) {
 				++self.received;
@@ -61,8 +65,6 @@ FirebaseWatcher.prototype.connect = function() {
 	});
 
 	function handleMessage(msg) {
-
-		console.log('<', msg);
 
 		msg = JSON.parse(msg);
 
@@ -98,8 +100,9 @@ FirebaseWatcher.prototype.connect = function() {
 									}
 								});
 							} else {
-								console.error(msg);
-								throw new Error('Handshake failed');
+								var err = new Error('Handshake failed');
+								err.msg = msg;
+								self.emit('error', err);
 							}
 						});
 						break;
@@ -131,13 +134,15 @@ FirebaseWatcher.prototype.connect = function() {
 									}
 								}, function(msg) {
 									if (msg.d.b.s != 'ok') {
-										console.error(msg);
-										throw new Error('Listen to root failed');
+										var err = new Error('Listen to root failed');
+										err.msg = msg;
+										self.emit('error', err);
 									}
 								});
 							} else {
-								console.error(msg);
-								throw new Error('Auth failed');
+								var err = new Error('Auth failed');
+								err.msg = msg;
+								self.emit('error', err);
 							}
 						});
 						break;
@@ -150,7 +155,6 @@ FirebaseWatcher.prototype.connect = function() {
 					if (self.state == IGNORE_NEXT_STREAM) {
 						self.state = NORMAL;
 					} else {
-						console.log('update to', msg.d.b.p, '=', msg.d.b.d);
 						handleUpdate(self, msg.d.b.p, msg.d.b.d);
 					}
 				}
@@ -170,7 +174,6 @@ FirebaseWatcher.prototype._send = function(msg, cb) {
 		this.reply[msg.d.r] = cb;
 	}
 	msg = JSON.stringify(msg);
-	console.log('>', msg);
 	this.ws.send(msg);
 };
 
@@ -282,25 +285,3 @@ function handleUpdate(self, path, newData) {
 
 
 exports = module.exports = FirebaseWatcher;
-
-var watcher = new FirebaseWatcher({
-	db: process.argv[2],
-	auth: process.argv[3]
-});
-
-watcher.connect();
-
-watcher.watch('quijibo', function(subkey, data) {
-	console.log('quijibo watcher', subkey, data);
-});
-
-watcher.watch('quijibo/b', function(subkey, data) {
-	console.log('q/b watcher', subkey, data);
-});
-
-watcher.watch('test/sub/e', function(subkey, data) {
-	console.log('tse', subkey, data);
-});
-
-
-console.dir(watcher.watches, {depth:null, colors: true});
