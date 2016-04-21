@@ -17,6 +17,7 @@ function FirebaseWatcher(opts) {
 	this.req = 0;
 	this.reply = {};
 	this.watches = {};
+	this.watchCount = 0;
 }
 
 util.inherits(FirebaseWatcher, EventEmitter);
@@ -190,6 +191,7 @@ FirebaseWatcher.prototype.watch = function(path, cb) {
 	if (!watch['.cb']) watch['.cb'] = [];
 
 	watch['.cb'].push(cb);
+	++this.watchCount;
 };
 
 FirebaseWatcher.prototype.unwatch = function(path, cb) {
@@ -205,6 +207,7 @@ FirebaseWatcher.prototype.unwatch = function(path, cb) {
 			if (!watch) return;
 		}
 		delete watch[path[path.length-1]];
+		self.watchCount = null;
 
 	} else {
 
@@ -217,10 +220,12 @@ FirebaseWatcher.prototype.unwatch = function(path, cb) {
 				var cbs = watch['.cb'];
 				if (cbs.length == 1 && cbs[0] == cb) {
 					delete watch['.cb'];
+					--self.watchCount;
 				} else {
 					for (var i = 0; i < cbs.length; i++) {
 						if (cbs[i] == cb) {
 							cbs.splice(i, 1);
+							--self.watchCount;
 							break;
 						}
 					}
@@ -235,6 +240,7 @@ FirebaseWatcher.prototype.unwatch = function(path, cb) {
 
 FirebaseWatcher.prototype.unwatchAll = function() {
 	this.watches = {};
+	this.watchCount = 0;
 };
 
 
