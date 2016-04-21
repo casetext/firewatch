@@ -1,4 +1,5 @@
-var WebSocket = require('ws');
+var WebSocket = require('ws'),
+	package = require('./package.json');
 
 var NORMAL = 0,
 	IGNORE_NEXT_STREAM = 1,
@@ -12,6 +13,7 @@ function FirebaseWatcher(opts) {
 	this.host = opts.host;
 	this.req = 0;
 	this.reply = {};
+	this.watches = {};
 }
 
 
@@ -26,6 +28,8 @@ FirebaseWatcher.prototype.connect = function() {
 
 		if (!isNaN(msg)) {
 			if (self.state == IGNORE_NEXT_STREAM) {
+				self._rootReceived = Date.now();
+				console.log('Time to gather root:', self._rootReceived - self._rootRequested);
 				self.state = IGNORED_STREAM;
 			} else {
 				self.state = STREAMING;
@@ -71,18 +75,20 @@ FirebaseWatcher.prototype.connect = function() {
 						self.connect();
 						break;
 					case 'h': // should be first message recieved
-						self._send({
+						var outMsg = {
 							t: 'd',
 							d: {
 								r: ++self.req, // 1
 								a: 's',
 								b: {
 									c: {
-										'firewatch-1-0-0': 1
+										// version goes here
 									}
 								}
 							}
-						}, function(msg) {
+						};
+						outMsg.d.b.c['firewatch-' + package.version.replace(/\./g, '-')] = 1;
+						self._send(outMsg, function(msg) {
 							if (msg.d.b.s == 'ok') {
 								self._send({
 									t: 'c',
@@ -112,6 +118,7 @@ FirebaseWatcher.prototype.connect = function() {
 							if (msg.d.b.s == 'ok') {
 								self._keepalive = setInterval(sendKeepalive, 45000, self);
 								self.state = IGNORE_NEXT_STREAM;
+								self._rootRequested = Date.now();
 								self._send({
 									t: 'd',
 									d: {
@@ -140,7 +147,12 @@ FirebaseWatcher.prototype.connect = function() {
 				if (msg.d.r) {
 					handleReply(self, msg);
 				} else if (msg.d.a == 'd') {
-					console.log('update to', msg.d.b.p, '=', msg.d.b.d);
+					if (self.state == IGNORE_NEXT_STREAM) {
+						self.state = NORMAL;
+					} else {
+						console.log('update to', msg.d.b.p, '=', msg.d.b.d);
+						handleUpdate(self, msg.d.b.p, msg.d.b.d);
+					}
 				}
 				break;
 		}
@@ -157,9 +169,70 @@ FirebaseWatcher.prototype._send = function(msg, cb) {
 	if (cb) {
 		this.reply[msg.d.r] = cb;
 	}
+	msg = JSON.stringify(msg);
 	console.log('>', msg);
-	this.ws.send(JSON.stringify(msg));
-}
+	this.ws.send(msg);
+};
+
+FirebaseWatcher.prototype.watch = function(path, cb) {
+	if (path[0] == '/') path = path.substr(1);
+	path = path.split('/');
+
+	var watch = this.watches;
+	for (var i = 0; i < path.length; i++) {
+		if (!watch[path[i]]) watch[path[i]] = {};
+		watch = watch[path[i]];
+	}
+
+	if (!watch['.cb']) watch['.cb'] = [];
+
+	watch['.cb'].push(cb);
+};
+
+FirebaseWatcher.prototype.unwatch = function(path, cb) {
+	if (path[0] == '/') path = path.substr(1);
+	path = path.split('/');
+
+	var watch = this.watches;
+
+	if (cb === true) {
+
+		for (var i = 0; i < path.length - 1; i++) {
+			watch = watch[path[i]];
+			if (!watch) return;
+		}
+		delete watch[path[path.length-1]];
+
+	} else {
+
+		for (var i = 0; i < path.length; i++) {
+			watch = watch[path[i]];
+			if (!watch) return;
+		}
+		if (watch['.cb']) {
+			if (typeof cb == 'function') {
+				var cbs = watch['.cb'];
+				if (cbs.length == 1 && cbs[0] == cb) {
+					delete watch['.cb'];
+				} else {
+					for (var i = 0; i < cbs.length; i++) {
+						if (cbs[i] == cb) {
+							cbs.splice(i, 1);
+							break;
+						}
+					}
+				}
+			} else {
+				delete watch['.cb'];
+			}
+		}
+
+	}
+};
+
+FirebaseWatcher.prototype.unwatchAll = function() {
+	this.watches = {};
+};
 
 
 function sendKeepalive(self) {
@@ -172,6 +245,40 @@ function handleReply(self, msg) {
 	delete self.reply[msg.d.r];
 }
 
+function handleUpdate(self, path, newData) {
+	path = path.split('/');
+
+
+	var obj = {}, level = obj;
+	for (var i = 0; i < path.length-1; i++) {
+		level = level[path[i]] = {};
+	}
+	level[path[path.length-1]] = newData;
+
+	check(obj, self.watches);
+
+	function check(obj, watch) {
+		for (var k in watch) {
+			if (k != '.cb') {
+				if (Object.prototype.hasOwnProperty.call(obj, k)) {
+
+					var cbs = watch[k]['.cb'];
+					if (cbs) {
+						for (var i = 0; i < cbs.length; i++) {
+							cbs[i](obj[k]);
+						}
+					}
+
+					if (obj[k] && typeof obj[k] == 'object') {
+						check(obj[k], watch[k]);
+					}
+
+				}
+			}
+		}
+	}
+}
+
 
 
 exports = module.exports = FirebaseWatcher;
@@ -182,3 +289,18 @@ var watcher = new FirebaseWatcher({
 });
 
 watcher.connect();
+
+watcher.watch('quijibo', function(subkey, data) {
+	console.log('quijibo watcher', subkey, data);
+});
+
+watcher.watch('quijibo/b', function(subkey, data) {
+	console.log('q/b watcher', subkey, data);
+});
+
+watcher.watch('test/sub/e', function(subkey, data) {
+	console.log('tse', subkey, data);
+});
+
+
+console.dir(watcher.watches, {depth:null, colors: true});
