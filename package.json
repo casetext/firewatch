@@ -2,7 +2,7 @@
   "name": "firewatch",
   "version": "1.0.0",
   "description": "Watch ALL THE FIREBASE ACTIVITY",
-  "main": "index.js",
+  "main": "watch.js",
   "dependencies": {
     "ws": "^1.1.0"
   },
