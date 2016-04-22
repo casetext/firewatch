@@ -18,6 +18,7 @@ function FirebaseWatcher(opts) {
 	this.reply = {};
 	this.watches = {};
 	this.watchCount = 0;
+	this.reconnectDelay = opts.reconnectDelay || 1000;
 }
 
 util.inherits(FirebaseWatcher, EventEmitter);
@@ -27,6 +28,29 @@ FirebaseWatcher.prototype.connect = function() {
 	if (!self.host) self.host = self.db + '.firebaseio.com';
 
 	self.ws = new WebSocket('wss://' + self.host + '/.ws?v=5&ns=' + self.db);
+	
+	self.ws.on('close', function() {
+		self.emit('disconnected');
+		if (!this._redirecting) {
+			clearInterval(self._keepalive);
+			setTimeout(function() {
+				self.connect();
+			}, self.reconnectDelay);
+		}
+	});
+
+	self.ws.on('open', function() {
+		self.emit('connected');\
+	});
+
+	self.ws.on('error', function(err) {
+		self.close();
+		setTimeout(function() {
+			self.connect();
+		}, self.reconnectDelay);
+	});
+
+
 	self.ws.on('message', function(msg) {
 
 		if (!isNaN(msg)) {
@@ -73,6 +97,7 @@ FirebaseWatcher.prototype.connect = function() {
 			case 'c':
 				switch (msg.d.t) {
 					case 'r': // redirect to different server
+						self.ws._redirecting = true;
 						self.close();
 						self.host = msg.d.d;
 						self.connect();
