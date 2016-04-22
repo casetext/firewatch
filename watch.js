@@ -40,7 +40,7 @@ FirebaseWatcher.prototype.connect = function() {
 	});
 
 	self.ws.on('open', function() {
-		self.emit('connected');\
+		self.emit('connected');
 	});
 
 	self.ws.on('error', function(err) {
@@ -94,15 +94,15 @@ FirebaseWatcher.prototype.connect = function() {
 		msg = JSON.parse(msg);
 
 		switch (msg.t) {
-			case 'c':
+			case 'c': // control message
 				switch (msg.d.t) {
-					case 'r': // redirect to different server
+					case 'r': // RESET - redirect to different server
 						self.ws._redirecting = true;
 						self.close();
 						self.host = msg.d.d;
 						self.connect();
 						break;
-					case 'h': // should be first message recieved
+					case 'h': // HELLO - should be first message recieved
 						var outMsg = {
 							t: 'd',
 							d: {
@@ -133,7 +133,7 @@ FirebaseWatcher.prototype.connect = function() {
 						});
 						break;
 
-					case 'o': // response to t:c msg sent after req 1
+					case 'o': // PONG - usually response to t:c msg sent after req 1
 						self._send({
 							t: 'd',
 							d: {
@@ -172,9 +172,23 @@ FirebaseWatcher.prototype.connect = function() {
 							}
 						});
 						break;
+
+					case 'e': // ERROR
+						self.emit('serverError', msg.d.d);
+						break;
+
+					case 's': // SHUTDOWN
+						self.emit('serverShutdown', msg.d.d);
+						self.close();
+						break;
+					default:
+						self.emit('warning', {
+							type: 'unknown-control',
+							msg: msg
+						});
 				}
 				break;
-			case 'd':
+			case 'd': // data message
 				if (msg.d.r) {
 					handleReply(self, msg);
 				} else if (msg.d.a == 'd') {
