@@ -233,6 +233,20 @@ FirebaseWatcher.prototype.watch = function(path, cb) {
 	++this.watchCount;
 };
 
+FirebaseWatcher.prototype.watchKeys = function(path, cb) {
+	var watcher = function(newData) {
+		if (newData && typeof newData == 'object') {
+			for (var k in newData) {
+				cb(k);
+			}
+		}
+	};
+
+	this.watch(path, watcher);
+
+	return watcher;
+};
+
 FirebaseWatcher.prototype.unwatch = function(path, cb) {
 	if (path[0] == '/') path = path.substr(1);
 	path = path.split('/');
