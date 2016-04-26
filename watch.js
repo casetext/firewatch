@@ -237,7 +237,7 @@ FirebaseWatcher.prototype.watchKeys = function(path, cb) {
 	var watcher = function(newData) {
 		if (newData && typeof newData == 'object') {
 			for (var k in newData) {
-				cb(k);
+				cb(k, newData[k]);
 			}
 		}
 	};
