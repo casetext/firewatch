@@ -1,5 +1,5 @@
 {
-  "name": "firewatch",
+  "name": "firebase-watch",
   "version": "1.0.0",
   "description": "Watch ALL THE FIREBASE ACTIVITY",
   "main": "watch.js",
