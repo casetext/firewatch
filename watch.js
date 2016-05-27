@@ -191,7 +191,7 @@ FirebaseWatcher.prototype.connect = function() {
 			case 'd': // data message
 				if (msg.d.r) {
 					handleReply(self, msg);
-				} else if (msg.d.a == 'd') {
+				} else if (msg.d.a == 'd' || msg.d.a == 'm') {
 					if (self.state == IGNORE_NEXT_STREAM) {
 						self.state = NORMAL;
 					} else {
