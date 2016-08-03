@@ -323,6 +323,8 @@ FirebaseWatcher.prototype._requestPaths = function() {
 	self.resolvedWatches = resolvedWatches;
 
 	if (self.watchReqs == 0) {
+		self.log('S: NORMAL');
+		self.state = NORMAL;
 		self._syncing = false;
 		self.emit('ready');
 	}
