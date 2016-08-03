@@ -18,6 +18,7 @@ function FirebaseWatcher(opts) {
 	this.reply = {};
 	this.watches = {};
 	this.watchCount = 0;
+	this.resolvedWatches = {};
 	this.reconnectDelay = opts.reconnectDelay || 1000;
 }
 
@@ -31,6 +32,7 @@ FirebaseWatcher.prototype.connect = function() {
 	
 	self.ws.on('close', function() {
 		self.emit('disconnected');
+		self._loggedIn = false;
 		if (!this._redirecting) {
 			clearInterval(self._keepalive);
 			setTimeout(function() {
@@ -55,8 +57,7 @@ FirebaseWatcher.prototype.connect = function() {
 
 		if (!isNaN(msg)) {
 			if (self.state == IGNORE_NEXT_STREAM) {
-				self._rootReceived = Date.now();
-				self.emit('serverReady', self._rootReceived - self._rootRequested)
+				console.log('in IGNORED_STREAM');
 				self.state = IGNORED_STREAM;
 			} else {
 				self.state = STREAMING;
@@ -64,21 +65,31 @@ FirebaseWatcher.prototype.connect = function() {
 			self.frames = parseInt(msg, 10);
 			self.received = 0;
 			self.buf='';
+			console.log('...' + self.frames + ' frames');
 		} else {
 
 			if (self.state == IGNORED_STREAM) {
 				++self.received;
 				if (self.received == self.frames) {
-					self.state = NORMAL;
-					self.emit('ready');
+					console.log('got all frames, ' + self.watchReqs + ' to go');
+					if (self.watchReqs > 0) {
+						self.state = IGNORE_NEXT_STREAM;
+					} else {
+						self.state = NORMAL;
+					}
 				} else {
-					self.emit('initProgress', self.received, self.frames);
+					// self.emit('initProgress', self.received, self.frames);
 				}
 			} else if (self.state == STREAMING) {
 				++self.received;
 				self.buf += msg;
 				if (self.received == self.frames) {
-					self.state = NORMAL;
+					console.log('NORMAL 2');
+					if (self.watchReqs > 0) {
+						self.state = IGNORE_NEXT_STREAM;
+					} else {
+						self.state = NORMAL;
+					}
 					handleMessage(self.buf);
 					self.buf = null;
 				}
@@ -91,7 +102,17 @@ FirebaseWatcher.prototype.connect = function() {
 
 	function handleMessage(msg) {
 
+		var len = msg.length;
+
 		msg = JSON.parse(msg);
+
+		process.stdout.write('RECV ');
+
+		if (len < 1024) {
+			console.dir(msg, { depth: null });
+		} else {
+			console.log(+ len + ' bytes');
+		}
 
 		switch (msg.t) {
 			case 'c': // control message
@@ -146,25 +167,8 @@ FirebaseWatcher.prototype.connect = function() {
 						}, function(msg) {
 							if (msg.d.b.s == 'ok') {
 								self._keepalive = setInterval(sendKeepalive, 45000, self);
-								self.state = IGNORE_NEXT_STREAM;
-								self._rootRequested = Date.now();
-								self._send({
-									t: 'd',
-									d: {
-										r: ++self.req,
-										a: 'q',
-										b: {
-											p: '/',
-											h: ''
-										}
-									}
-								}, function(msg) {
-									if (msg.d.b.s != 'ok') {
-										var err = new Error('Listen to root failed');
-										err.msg = msg;
-										self.emit('error', err);
-									}
-								});
+								self._loggedIn = true;
+								self._requestPaths();
 							} else {
 								var err = new Error('Auth failed');
 								err.msg = msg;
@@ -193,7 +197,7 @@ FirebaseWatcher.prototype.connect = function() {
 					handleReply(self, msg);
 				} else if (msg.d.a == 'd' || msg.d.a == 'm') {
 					if (self.state == IGNORE_NEXT_STREAM) {
-						self.state = NORMAL;
+						console.log('msg, ' + self.watchReqs + ' to go');
 					} else {
 						handleUpdate(self, msg.d.b.p, msg.d.b.d);
 					}
@@ -205,6 +209,7 @@ FirebaseWatcher.prototype.connect = function() {
 };
 
 FirebaseWatcher.prototype.close = function() {
+	this._loggedIn = false;
 	clearInterval(this._keepalive);
 	this.ws.close();
 };
@@ -213,8 +218,121 @@ FirebaseWatcher.prototype._send = function(msg, cb) {
 	if (cb) {
 		this.reply[msg.d.r] = cb;
 	}
+	process.stdout.write('SEND ');
+	console.dir(msg, { depth: null });
 	msg = JSON.stringify(msg);
 	this.ws.send(msg);
+};
+
+FirebaseWatcher.prototype._requestPaths = function() {
+	var self = this;
+
+	self._syncing = true;
+
+	self.watchReqs = 0;
+	self.state = IGNORE_NEXT_STREAM;
+
+	var resolvedWatches = {};
+
+	console.log('CURRENT:', self.resolvedWatches);
+
+	check(self.watches, ['']);
+
+	function check(level, path) {
+		if (level['.cb']) {
+			watchOn(path.join('/') || '/');
+		} else {
+			for (var k in level) {
+				check(level[k], path.concat(k));
+			}
+		}
+	}
+
+	function watchOn(path) {
+		console.log('watchOn', path);
+		resolvedWatches[path] = true;
+
+		if (self.resolvedWatches[path]) {
+			console.log('...already have');
+			return;
+		}
+
+		self.watchReqs++;
+
+		self._send({
+			t: 'd',
+			d: {
+				r: ++self.req,
+				a: 'q',
+				b: {
+					p: path,
+					h: ''
+				}
+			}
+		}, function(msg) {
+			if (msg.d.b.s != 'ok') {
+				var err = new Error('Listen to ' + path + ' failed');
+				err.msg = msg;
+				self.emit('error', err);
+			}
+
+			if (--self.watchReqs == 0) {
+				console.log('NORMAL wocb');
+				self.state = NORMAL;
+				self._syncing = false;
+				self.emit('ready');
+			}
+		});
+	}
+
+
+	for (var path in self.resolvedWatches) {
+		if (!resolvedWatches[path]) {
+			self._send({
+				t: 'd',
+				d: {
+					r: ++self.req,
+					a: 'n',
+					b: {
+						p: path
+					}
+				}
+			}, function(msg) {
+				if (msg.d.b.s != 'ok') {
+					var err = new Error('Unlisten to ' + path + ' failed');
+					err.msg = msg;
+					self.emit('error', err);
+				}
+			});
+		}
+	}
+
+	self.resolvedWatches = resolvedWatches;
+
+	if (self.watchReqs == 0) {
+		self._syncing = false;
+		self.emit('ready');
+	}
+};
+
+
+FirebaseWatcher.prototype.sync = function() {
+	var self = this;
+	if (self._sync) {
+		clearTimeout(self._sync);
+	}
+
+	self._sync = setTimeout(function() {
+		self._sync = null;
+		if (self._loggedIn) {
+			if (self._syncing) {
+				// in the middle of requestPaths doing its thing; try again later
+				self.sync();
+			} else {
+				self._requestPaths();
+			}
+		}
+	}, 100);
 };
 
 FirebaseWatcher.prototype.watch = function(path, cb) {
@@ -231,6 +349,11 @@ FirebaseWatcher.prototype.watch = function(path, cb) {
 
 	watch['.cb'].push(cb);
 	++this.watchCount;
+
+	if (this._loggedIn) {
+		// adding a watch after we've already connected
+		this.sync();
+	}
 };
 
 FirebaseWatcher.prototype.watchKeys = function(path, cb) {
@@ -289,11 +412,15 @@ FirebaseWatcher.prototype.unwatch = function(path, cb) {
 		}
 
 	}
+
+	this.sync();
 };
 
 FirebaseWatcher.prototype.unwatchAll = function() {
 	this.watches = {};
 	this.watchCount = 0;
+
+	this.sync();
 };
 
 
