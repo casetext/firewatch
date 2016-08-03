@@ -82,8 +82,6 @@ FirebaseWatcher.prototype.connect = function() {
 						self.log('S: NORMAL');
 						self.state = NORMAL;
 					}
-				} else {
-					// self.emit('initProgress', self.received, self.frames);
 				}
 			} else if (self.state == STREAMING) {
 				++self.received;
