@@ -35,6 +35,7 @@ FirebaseWatcher.prototype.connect = function() {
 		self._loggedIn = false;
 		if (!this._redirecting) {
 			clearInterval(self._keepalive);
+			self.resolvedWatches = {};
 			setTimeout(function() {
 				self.connect();
 			}, self.reconnectDelay);
@@ -211,6 +212,7 @@ FirebaseWatcher.prototype.connect = function() {
 FirebaseWatcher.prototype.close = function() {
 	this._loggedIn = false;
 	clearInterval(this._keepalive);
+	this.resolvedWatches = {};
 	this.ws.close();
 };
 
