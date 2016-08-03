@@ -11,6 +11,7 @@ var NORMAL = 0,
 
 function FirebaseWatcher(opts) {
 	EventEmitter.call(this);
+	this.debug = opts.debug;
 	this.db = opts.db;
 	this.auth = opts.auth;
 	this.host = opts.host;
@@ -58,24 +59,27 @@ FirebaseWatcher.prototype.connect = function() {
 
 		if (!isNaN(msg)) {
 			if (self.state == IGNORE_NEXT_STREAM) {
-				console.log('in IGNORED_STREAM');
+				self.log('S: IGNORED_STREAM');
 				self.state = IGNORED_STREAM;
 			} else {
+				self.log('S: STREAMING');
 				self.state = STREAMING;
 			}
 			self.frames = parseInt(msg, 10);
 			self.received = 0;
 			self.buf='';
-			console.log('...' + self.frames + ' frames');
+			self.log('...' + self.frames + ' frames');
 		} else {
 
 			if (self.state == IGNORED_STREAM) {
 				++self.received;
 				if (self.received == self.frames) {
-					console.log('got all frames, ' + self.watchReqs + ' to go');
+					self.log('got all frames, ' + self.watchReqs + ' to go');
 					if (self.watchReqs > 0) {
+						self.log('S: IGNORE_NEXT_STREAM');
 						self.state = IGNORE_NEXT_STREAM;
 					} else {
+						self.log('S: NORMAL');
 						self.state = NORMAL;
 					}
 				} else {
@@ -85,11 +89,13 @@ FirebaseWatcher.prototype.connect = function() {
 				++self.received;
 				self.buf += msg;
 				if (self.received == self.frames) {
-					console.log('NORMAL 2');
+					self.log('NORMAL 2');
 					if (self.watchReqs > 0) {
+						self.log('S: IGNORE_NEXT_STREAM');
 						self.state = IGNORE_NEXT_STREAM;
 					} else {
 						self.state = NORMAL;
+						self.log('S: NORMAL');
 					}
 					handleMessage(self.buf);
 					self.buf = null;
@@ -107,12 +113,14 @@ FirebaseWatcher.prototype.connect = function() {
 
 		msg = JSON.parse(msg);
 
-		process.stdout.write('RECV ');
+		if (self.debug) {
+			process.stdout.write('RECV ');
 
-		if (len < 1024) {
-			console.dir(msg, { depth: null });
-		} else {
-			console.log(+ len + ' bytes');
+			if (len < 1024) {
+				console.dir(msg, { depth: null });
+			} else {
+				console.log(+ len + ' bytes');
+			}
 		}
 
 		switch (msg.t) {
@@ -198,7 +206,7 @@ FirebaseWatcher.prototype.connect = function() {
 					handleReply(self, msg);
 				} else if (msg.d.a == 'd' || msg.d.a == 'm') {
 					if (self.state == IGNORE_NEXT_STREAM) {
-						console.log('msg, ' + self.watchReqs + ' to go');
+						self.log('msg, ' + self.watchReqs + ' to go');
 					} else {
 						handleUpdate(self, msg.d.b.p, msg.d.b.d);
 					}
@@ -220,8 +228,10 @@ FirebaseWatcher.prototype._send = function(msg, cb) {
 	if (cb) {
 		this.reply[msg.d.r] = cb;
 	}
-	process.stdout.write('SEND ');
-	console.dir(msg, { depth: null });
+	if (this.debug) {
+		process.stdout.write('SEND ');
+		console.dir(msg, { depth: null });
+	}
 	msg = JSON.stringify(msg);
 	this.ws.send(msg);
 };
@@ -232,11 +242,12 @@ FirebaseWatcher.prototype._requestPaths = function() {
 	self._syncing = true;
 
 	self.watchReqs = 0;
+	self.log('S: IGNORE_NEXT_STREAM');
 	self.state = IGNORE_NEXT_STREAM;
 
 	var resolvedWatches = {};
 
-	console.log('CURRENT:', self.resolvedWatches);
+	self.log('CURRENT:', self.resolvedWatches);
 
 	check(self.watches, ['']);
 
@@ -251,11 +262,11 @@ FirebaseWatcher.prototype._requestPaths = function() {
 	}
 
 	function watchOn(path) {
-		console.log('watchOn', path);
+		self.log('watchOn', path);
 		resolvedWatches[path] = true;
 
 		if (self.resolvedWatches[path]) {
-			console.log('...already have');
+			self.log('...already have');
 			return;
 		}
 
@@ -279,7 +290,7 @@ FirebaseWatcher.prototype._requestPaths = function() {
 			}
 
 			if (--self.watchReqs == 0) {
-				console.log('NORMAL wocb');
+				self.log('S: NORMAL');
 				self.state = NORMAL;
 				self._syncing = false;
 				self.emit('ready');
@@ -424,6 +435,12 @@ FirebaseWatcher.prototype.unwatchAll = function() {
 
 	this.sync();
 };
+
+FirebaseWatcher.prototype.log = function() {
+	if (this.debug) {
+		console.log.apply(console, arguments);
+	}
+}
 
 
 function sendKeepalive(self) {
