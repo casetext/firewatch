@@ -459,25 +459,44 @@ function _convertObjToLevels(inputObj) {
 		return inputObj;
 	}
 
-	var objWithLevels = {};
+	var resultObj = {};
+	convertHelper(inputObj, []);
+	return resultObj;
 
-	Object.keys(inputObj || {}).forEach(function(key) {
+	function convertHelper(currentRawObj, path) {
 
-		var path = key.split('/');
+		// If the current raw object is a scalar, navigate to where this raw object should live by
+		// walking down the path in resultObj, and put this raw object there.
+		if (typeof currentRawObj !== 'object') {
 
-		if (path.length === 1) {
-			objWithLevels[path[0]] = _convertObjToLevels(inputObj[key]);
-		} else {
-			var obj = {}, level = obj;
-			for (var i = 1; i < path.length-1; i++) {
-				level = level[path[i]] = {};
+			var currentNode = resultObj;
+
+			for (var i = 0; i < path.length - 1; i++) {
+				if (!currentNode[path[i]]) {
+				 	currentNode[path[i]] = {};
+				}
+				currentNode = currentNode[path[i]];
 			}
-			level[path[path.length-1]] = _convertObjToLevels(inputObj[key]);
-			objWithLevels[path[0]] = obj;
-		}
-	});
 
-	return objWithLevels;
+			currentNode[path[path.length - 1]] = currentRawObj;
+
+		}
+
+		// Else, if the current raw object is a complex object, then for each of its keys,
+		// recursively call convertHelper passing in the value corresponding to the key and
+		// the path to this value, splitting up the key into multiple path levels if the key
+		// contains slash(es).
+		else {
+
+			Object.keys(currentRawObj).forEach(function(key) {
+
+				convertHelper(currentRawObj[key], path.concat(key.split('/')));
+
+			});
+
+		}
+
+	}
 
 }
 
