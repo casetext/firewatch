@@ -1,6 +1,6 @@
 {
   "name": "firebase-watch",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "Watch ALL THE FIREBASE ACTIVITY",
   "main": "watch.js",
   "dependencies": {
