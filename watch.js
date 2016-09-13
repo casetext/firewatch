@@ -30,7 +30,7 @@ FirebaseWatcher.prototype.connect = function() {
 	if (!self.host) self.host = self.db + '.firebaseio.com';
 
 	self.ws = new WebSocket('wss://' + self.host + '/.ws?v=5&ns=' + self.db);
-	
+
 	self.ws.on('close', function() {
 		self.emit('disconnected');
 		self._loggedIn = false;
@@ -101,7 +101,7 @@ FirebaseWatcher.prototype.connect = function() {
 			} else {
 				handleMessage(msg);
 			}
-			
+
 		}
 	});
 
@@ -453,32 +453,76 @@ function handleReply(self, msg) {
 	delete self.reply[msg.d.r];
 }
 
-function handleUpdate(self, path, newData) {
-	path = path.split('/');
+function _convertObjToLevels(inputObj) {
 
-
-	var obj = {}, level = obj;
-	for (var i = 0; i < path.length-1; i++) {
-		level = level[path[i]] = {};
+	if (!inputObj || (typeof inputObj !== 'object')) {
+		return inputObj;
 	}
-	level[path[path.length-1]] = newData;
 
-	check(obj, self.watches);
+	var resultObj = {};
+	convertHelper(inputObj, []);
+	return resultObj;
 
-	function check(obj, watch) {
+	function convertHelper(currentRawObj, path) {
+
+		// If the current raw object is a scalar, navigate to where this raw object should live by
+		// walking down the path in resultObj, and put this raw object there.
+		if (typeof currentRawObj !== 'object') {
+
+			var currentNode = resultObj;
+
+			for (var i = 0; i < path.length - 1; i++) {
+				if (!currentNode[path[i]]) {
+				 	currentNode[path[i]] = {};
+				}
+				currentNode = currentNode[path[i]];
+			}
+
+			currentNode[path[path.length - 1]] = currentRawObj;
+
+		}
+
+		// Else, if the current raw object is a complex object, then for each of its keys,
+		// recursively call convertHelper passing in the value corresponding to the key and
+		// the path to this value, splitting up the key into multiple path levels if the key
+		// contains slash(es).
+		else {
+
+			Object.keys(currentRawObj).forEach(function(key) {
+
+				convertHelper(currentRawObj[key], path.concat(key.split('/')));
+
+			});
+
+		}
+
+	}
+
+}
+
+function handleUpdate(self, path, newData) {
+
+	var augmentedNewData = {};
+	augmentedNewData[path] = newData;
+	var leveledNewData = _convertObjToLevels(augmentedNewData);
+
+  	check(leveledNewData, self.watches);
+
+	function check(leveledNewData, watch) {
+
 		for (var k in watch) {
 			if (k != '.cb') {
-				if (Object.prototype.hasOwnProperty.call(obj, k)) {
+				if (Object.prototype.hasOwnProperty.call(leveledNewData, k)) {
 
 					var cbs = watch[k]['.cb'];
 					if (cbs) {
 						for (var i = 0; i < cbs.length; i++) {
-							cbs[i](obj[k]);
+							cbs[i](leveledNewData[k]);
 						}
 					}
 
-					if (obj[k] && typeof obj[k] == 'object') {
-						check(obj[k], watch[k]);
+					if (leveledNewData[k] && typeof leveledNewData[k] == 'object') {
+						check(leveledNewData[k], watch[k]);
 					}
 
 				}
