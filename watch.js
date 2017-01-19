@@ -467,7 +467,7 @@ function _convertObjToLevels(inputObj) {
 
 		// If the current raw object is a scalar, navigate to where this raw object should live by
 		// walking down the path in resultObj, and put this raw object there.
-		if (typeof currentRawObj !== 'object') {
+		if (typeof currentRawObj !== 'object' || currentRawObj === null) {
 
 			var currentNode = resultObj;
 
